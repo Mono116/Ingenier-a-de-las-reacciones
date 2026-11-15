@@ -1,5 +1,5 @@
-%% PROYECTO DE INGENIERIA DE LAS REACCIONES
-%% Análisis de Sensibilidad y Evaluación Técnico-Económica de un Proceso Haber-Bosch Multilecho
+%%% PROYECTO DE INGENIERIA DE LAS REACCIONES
+%%% Análisis de Sensibilidad y Evaluación Técnico-Económica de un Proceso Haber-Bosch Multilecho
 
 % INTEGRANTES: Luis Mario Paredes Narvaez, Valentina Villalobos Agresott,
 % Sergio Andrés Barrios Altamiranda, Juan Esteban Suarez Buendía.
@@ -58,7 +58,7 @@
 
 
 % =========================================================================
-% SCRIPT PRINCIPAL: SIMULACIÓN REACTOR HABER-BOSCH
+% SCRIPT PRINCIPAL: SIMULACIÓN DE REACTORES EN SERIE PROCESO HABER-BOSCH
 % =========================================================================
 
 % 1. DATOS INICIALES Y PARÁMETROS 
@@ -98,7 +98,7 @@ params.b_NH3 = 2.954e-2;
 params.c_NH3 = 4.421e-6;
 params.d_NH3 = -6.686e-9;
 % Geometría del reactor
-D_t = 2.0;                  % Diámetro del reactor industrial [m]
+D_t = 3.0;                  % Diámetro del reactor industrial [m]
 params.Ac = (pi * D_t^2)/4; % Área transversal [m2]
 L_lecho = 2.5;              % Longitud de este primer lecho [m]
 
@@ -122,7 +122,40 @@ W_span = [0 W_total];
 
 % 4. SOLUCIÓN NUMÉRICA
 opciones = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
-[W_out, y_out] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span, y0, opciones);
+
+
+%% SIMULACIONES DE LECHOS %%
+
+% --- SIMULACIÓN DEL LECHO 1 ---
+W_lecho1 = 20000; % kg de catalizador
+W_span1  = [0, W_lecho1];
+[W_out1, y_out1] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span1, y0, opciones);
+
+% Intercooling 1
+y0_lecho2 = y_out1(end, :);         % Estado final del gas 1 = Estado inicial gas 2
+y0_lecho2(5) = 673;                 % Enfriamiento del gas de salida de nuevo a 673 K
+
+% --- SIMULACIÓN DEL LECHO 2 ---
+W_lecho2 = 30000; % kg de catalizador
+% La integración inicia donde terminó el lecho anterior
+W_span2  = [W_out1(end), W_out1(end) + W_lecho2];
+% CORRECCIÓN: Usar y0_lecho2 en lugar de y0
+[W_out2, y_out2] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span2, y0_lecho2, opciones);
+
+% Intercooling 2
+y0_lecho3 = y_out2(end, :);         % Estado final del gas 2 = estado inicial del gas 3
+y0_lecho3(5) = 673; 
+
+% --- SIMULACIÓN DEL LECHO 3 ---
+W_lecho3 = 30000; % kg de catalizador
+% Limites de integración
+W_span3 = [W_out2(end), W_out2(end) + W_lecho3];
+% CORRECCIÓN: Usar y0_lecho3 en lugar de y0
+[W_out3, y_out3] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span3, y0_lecho3, opciones); 
+
+% Ensamblaje de los perfiles multilecho
+W_out = [W_out1; W_out2; W_out3];
+y_out = [y_out1; y_out2; y_out3];
 
 % 5. EXTRACCIÓN Y POST-PROCESAMIENTO
 F_N2  = y_out(:, 1); 
@@ -215,10 +248,7 @@ dydW(3) = r_NH3;
 % Balance de momentum (Ecuación de Ergun acoplada con T y Flujo)
 dydW(4) = (-params.alpha_Ergun / (2 * p)) * (F_T / F_T0) * (T / params.T0);
 
-% Balance de energía (¡Por completar!)
-% Necesitas definir los Cp de cada gas y acoplar el calor de reacción
-% dydW(5) = ... 
-
+% Balance de energía 
 % Balance de energía
 % a. Capacidades caloríficas individuales [J/(mol*K)]
 Cp_N2  = params.a_N2  + params.b_N2*T  + params.c_N2*T^2  + params.d_N2*T^3;
