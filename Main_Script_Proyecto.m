@@ -56,7 +56,6 @@
 % NOTA: La primera parte del script asume el comportamiento ideal Z = 1. Despues
 % se hacen las correciones con el modelo de Peng-Robinson.
 
-
 % =========================================================================
 % SCRIPT PRINCIPAL: SIMULACIÓN DE REACTORES EN SERIE PROCESO HABER-BOSCH
 % =========================================================================
@@ -80,7 +79,7 @@ params.rho_iron = params.rho_b / (1 - params.phi); % Densidad del hierro [kg/m3]
 
 % Propiedades del gas a la entrada
 params.mu = 2.0e-5;         % Viscosidad del gas [Pa*s]
-params.rho_0 = 26.7;        % Densidad del gas en la entrada [kg/m3]
+%%%%                        % Densidad del gas en la entrada [kg/m3]
 params.G = 26.7;            % Flujo másico superficial [kg/m2*s]
 % Constantes para las capacidades calorificas
 params.a_N2 = 28.90;
@@ -120,9 +119,57 @@ y0 = [params.FA0, params.FB0, params.FC0, 1, params.T0];
 W_total = params.Ac * L_lecho * params.rho_iron * (1 - params.phi);
 W_span = [0 W_total];
 
-% 4. SOLUCIÓN NUMÉRICA
-opciones = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
+% Mapeo estricto de índices cruzados: 
+% y(1)=N2, y(2)=H2, y(3)=NH3
+term_cruzados = 2 * ( ...
+    y(1)*y(2)*sqrt(a(1)*a(2))*(1 - k_N2_H2)  + ... % N2 - H2
+    y(1)*y(3)*sqrt(a(1)*a(3))*(1 - k_N2_NH3) + ... % N2 - NH3
+    y(2)*y(3)*sqrt(a(2)*a(3))*(1 - k_H2_NH3)   ... % H2 - NH3
+);
 
+a_m = term_puros + term_cruzados;
+b_m = y(1)*v(1) + y(2)*v(2) + y(3)*v(3);
+
+% 4. Ecuación cúbica de Estado en Z (Peng-Robinson)
+A = a_m * params.P0 / ((params.R * params.T0)^2);
+B = b_m * params.P0 / (params.R * params.T0);
+
+raices_reales = roots([1, -(1 - B), (A - 3*B^2 - 2*B), -(A*B - B^2 - B^3)]);
+
+% Seleccionar la raíz física real mayor (fase gas)
+Z_entrada = max(real(raices_reales(imag(raices_reales) == 0)));
+params.Z0 = Z_entrada; % Guardamos Z0 en tu estructura de parámetros
+disp(['Factor de compresibilidad inicial (Z0): ', num2str(params.Z0)]);
+
+%%%%% Densidad a partir de Z0
+% Calcular primero FT0, y_entrada y llamar a calcularPR para obtener Z0
+FT0 = params.FA0 + params.FB0 + params.FC0;
+y_entrada = [params.FA0 / FT0, params.FB0 / FT0, params.FC0 / FT0];
+[Z0, f_hat_entrada] = calcularPR(params.T0, params.P0, y_entrada, params);
+params.Z0 = Z0;
+
+% Peso molecular promedio en la entrada [kg/mol]
+MW = [0.0280134; 0.00201588; 0.017031];
+MW_prom0 = y_entrada * MW;
+
+% Densidad real inicial [kg/m3]
+params.rho_0 = (params.P0 * MW_prom0) / (params.Z0 * params.R * params.T0);
+disp(["Densidad real inicial:", params.rho_0]);
+% 2. Construir el vector de fracciones molares iniciales [y_N2, y_H2, y_NH3]
+y_entrada = [params.FA0 / FT0, params.FB0 / FT0, params.FC0 / FT0];
+
+% 3. Llamar a la función local para obtener Z0 y el vector de fugacidades (f_hat)
+[Z0, f_hat_entrada] = calcularPR(params.T0, params.P0, y_entrada, params);
+
+% 4. Guardar Z0 en tu estructura de parámetros para la ecuación de Ergun
+params.Z0 = Z0;
+
+% Mostrar resultados iniciales en la ventana de comandos
+disp(['Factor de compresibilidad inicial (Z0): ', num2str(Z0)]);
+disp('Fugacidades iniciales [atm]:');
+disp(['  f_N2  = ', num2str(f_hat_entrada(1)), ' atm']);
+disp(['  f_H2  = ', num2str(f_hat_entrada(2)), ' atm']);
+disp(['  f_NH3 = ', num2str(f_hat_entrada(3)), ' atm']);
 
 %% SIMULACIONES DE LECHOS %%
 
@@ -199,23 +246,23 @@ F_NH3 = y(3);
 p     = y(4); % Presión reducida (P/P0)
 T     = y(5); % Temperatura actual [K]
 
-% 2. Cálculos hidrodinámicos y de flujo
+% 2. Cálculos hidrodinámicos y termodinámicos locales (Peng-Robinson)
 F_T = F_N2 + F_H2 + F_NH3;
-F_T0 = params.FA0 + params.FB0 + params.FC0; % Flujo total inicial
+F_T0 = params.FA0 + params.FB0 + params.FC0;
 
-% Presión real local en Pascales (o la unidad de tu P0)
-P_local = p * params.P0; 
+P_local = p * params.P0; % [Pa]
+y_local = [F_N2 / F_T, F_H2 / F_T, F_NH3 / F_T];
 
-% Presiones parciales/locales
-P_local_atm = (p * params.P0) / 101325; 
-% Presiones parciales en ATMÓSFERAS
-P_N2  = (F_N2 / F_T) * P_local_atm;
-P_H2  = (F_H2 / F_T) * P_local_atm;
-P_NH3 = (F_NH3 / F_T) * P_local_atm;
+% Evaluar Z y fugacidades parciales [atm] en cada paso dW
+[Z, f_hat] = calcularPR(T, P_local, y_local, params);
 
-% Trampa numérica: Evitar división por cero en Temkin-Pyzhev al inicio del lecho
-if P_NH3 < 1e-10
-    P_NH3 = 1e-10; 
+f_N2  = f_hat(1);
+f_H2  = f_hat(2);
+f_NH3 = f_hat(3);
+
+% Trampa numérica para evitar división por cero
+if f_NH3 < 1e-10
+    f_NH3 = 1e-10; 
 end
 
 % 3. Propiedades termodinámicas y cinéticas dependientes de la temperatura (T)
@@ -230,25 +277,20 @@ log10_Ka = -2.691122 * log10(T) ...
     + 2.689;
 Ka = 10^(log10_Ka);
 
-% 4. Ley de velocidad clásica (Temkin-Pyzhev)
-% Tasa de reacción respecto a la formación de NH3
-r_NH3 = k_reversa * ( Ka^2 * P_N2 * (P_H2^3 / P_NH3^2)^params.alpha_TP - ...
-    (P_NH3^2 / P_H2^3)^(1 - params.alpha_TP) );
+% 4. Ley de velocidad de Temkin-Pyzhev usando FUGACIDADES
+r_NH3 = k_reversa * ( Ka^2 * f_N2 * (f_H2^3 / f_NH3^2)^params.alpha_TP - ...
+    (f_NH3^2 / f_H2^3)^(1 - params.alpha_TP) );
 
-% Leyes de velocidad relativa por estequiometría
 r_N2 = -0.5 * r_NH3;
 r_H2 = -1.5 * r_NH3;
 
-% 5. Ensamblaje del sistema de ecuaciones diferenciales (dydW)
-% Balances molares
+% 5. Balances molares (ESTAS TRES LÍNEAS FALTABAN)
 dydW(1) = r_N2;
 dydW(2) = r_H2;
 dydW(3) = r_NH3;
 
-% Balance de momentum (Ecuación de Ergun acoplada con T y Flujo)
-dydW(4) = (-params.alpha_Ergun / (2 * p)) * (F_T / F_T0) * (T / params.T0);
-
-% Balance de energía 
+% Balance de momentum (Ecuación de Ergun corregida con Z / Z0)
+dydW(4) = (-params.alpha_Ergun / (2 * p)) * (F_T / F_T0) * (T / params.T0) * (Z / params.Z0);
 % Balance de energía
 % a. Capacidades caloríficas individuales [J/(mol*K)]
 Cp_N2  = params.a_N2  + params.b_N2*T  + params.c_N2*T^2  + params.d_N2*T^3;
