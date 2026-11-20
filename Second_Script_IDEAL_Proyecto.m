@@ -16,8 +16,8 @@ params.A = (9.02e8) / 3600; % Factor preexponencial [mol/kg s]
 
 % Parámetros del Lecho y Ecuación de Ergun
 params.phi = 0.45;          % Porosidad del lecho
-params.Dp = 300e-6;         % Diámetro de partícula [m] (300 micras)
-params.rho_b = 2500;        % Densidad bulk [kg/m3]
+params.Dp = 1500e-6;        % Diámetro de partícula [m] (300 micras)
+params.rho_b = 2800;        % Densidad bulk [kg/m3]
 params.rho_iron = params.rho_b / (1 - params.phi); % Densidad del hierro [kg/m3]
 
 % Propiedades del gas a la entrada
@@ -42,7 +42,7 @@ params.d_NH3 = -6.686e-9;
 % Geometría del reactor
 D_t = 3.0;                  % Diámetro del reactor industrial [m]
 params.Ac = (pi * D_t^2)/4; % Área transversal [m2]
-L_lecho = 2.5;              % Longitud de este primer lecho [m]
+L_lecho = 3.0;              % Longitud de este primer lecho [m]
 
 % Cálculo de alpha para Ergun
 gc = 1;                     % Factor de conversión (1 en SI)
@@ -98,6 +98,34 @@ W_span3 = [W_out2(end), W_out2(end) + W_lecho3];
 % Ensamblaje de los perfiles multilecho
 W_out = [W_out1; W_out2; W_out3];
 y_out = [y_out1; y_out2; y_out3];
+
+%% CÁLCULO DE CALOR EN INTERCOOLERS (Q1 y Q2)
+% Función anónima para la integral analítica de Cp(T) desde T1 hasta T2
+int_Cp = @(a, b, c, d, T1, T2) a*(T2 - T1) + (b/2)*(T2^2 - T1^2) + ...
+    (c/3)*(T2^3 - T1^3) + (d/4)*(T2^4 - T1^4);
+
+T_objetivo = 673; % Temperatura de entrada al siguiente lecho [K]
+
+% Intercooler 1 (Salida del Lecho 1)
+F_sal1 = y_out1(end, 1:3); % [F_N2, F_H2, F_NH3]
+T_sal1 = y_out1(end, 5);
+
+Q1 = (F_sal1(1) * int_Cp(params.a_N2,  params.b_N2,  params.c_N2,  params.d_N2,  T_objetivo, T_sal1) + ...
+    F_sal1(2) * int_Cp(params.a_H2,  params.b_H2,  params.c_H2,  params.d_H2,  T_objetivo, T_sal1) + ...
+    F_sal1(3) * int_Cp(params.a_NH3, params.b_NH3, params.c_NH3, params.d_NH3, T_objetivo, T_sal1)) / 1e6; % [MW]
+
+% Intercooler 2 (Salida del Lecho 2)
+F_sal2 = y_out2(end, 1:3);
+T_sal2 = y_out2(end, 5);
+
+Q2 = (F_sal2(1) * int_Cp(params.a_N2,  params.b_N2,  params.c_N2,  params.d_N2,  T_objetivo, T_sal2) + ...
+    F_sal2(2) * int_Cp(params.a_H2,  params.b_H2,  params.c_H2,  params.d_H2,  T_objetivo, T_sal2) + ...
+    F_sal2(3) * int_Cp(params.a_NH3, params.b_NH3, params.c_NH3, params.d_NH3, T_objetivo, T_sal2)) / 1e6; % [MW]
+
+Q_total_MW = Q1 + Q2;
+disp(['Calor Intercooler 1: ', num2str(Q1, '%.2f'), ' MW']);
+disp(['Calor Intercooler 2: ', num2str(Q2, '%.2f'), ' MW']);
+disp(['Calor Total Retirado: ', num2str(Q_total_MW, '%.2f'), ' MW']);
 
 % 5. EXTRACCIÓN Y POST-PROCESAMIENTO
 F_N2  = y_out(:, 1); 
