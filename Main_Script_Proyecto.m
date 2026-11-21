@@ -30,20 +30,26 @@ params.rho_iron = params.rho_b / (1 - params.phi); % Densidad del hierro [kg/m3]
 % Propiedades del gas
 params.mu = 2.0e-5;         % Viscosidad del gas [Pa*s]
 params.G  = 26.7;           % Flujo másico superficial [kg/m2*s]
-
 % Constantes para las capacidades caloríficas
 params.a_N2  = 28.90;   params.b_N2  = -1.571e-3; params.c_N2  = 8.081e-6; params.d_N2  = -2.873e-9;
 params.a_H2  = 28.84;   params.b_H2  = 7.650e-5;  params.c_H2  = 3.288e-6; params.d_H2  = -8.698e-10;
 params.a_NH3 = 35.15;   params.b_NH3 = 2.954e-2;  params.c_NH3 = 4.421e-6; params.d_NH3 = -6.686e-9;
 
-% Geometría del reactor
-D_t = 3.0;                  % Diámetro del reactor industrial [m]
-params.Ac = (pi * D_t^2)/4; % Área transversal [m2]
 
-% 2. CONDICIONES INICIALES DE FLUJO
-params.FA0 = 100000;            % Flujo inicial de N2 [mol/s]
-params.FB0 = 300000;            % Flujo inicial de H2 [mol/s]
+
+% CONDICIONES INICIALES DE FLUJO
+params.FA0 = 10000;            % Flujo inicial de N2 [mol/s]
+params.FB0 = 30000;            % Flujo inicial de H2 [mol/s]
 params.FC0 = 0.05 * params.FA0; % Flujo inicial de NH3 [mol/s] (5% de FA0)
+
+% Cálculo dinámico del flujo másico total y G [kg/(m2*s)]
+MW = [0.0280134; 0.00201588; 0.017031]; % [kg/mol] para N2, H2, NH3
+m_dot0 = [params.FA0, params.FB0, params.FC0] * MW; % Flujo másico [kg/s]
+
+% Geometría del reactor
+D_t = sqrt(4*m_dot0/(pi*params.G));                  % Diámetro del reactor industrial [m]
+disp(["Dt: ", D_t])
+params.Ac = (pi * D_t^2)/4; % Área transversal [m2]
 
 % Vector de estado inicial: y0 = [F_N2, F_H2, F_NH3, p, T]
 y0 = [params.FA0, params.FB0, params.FC0, 1, params.T0];
@@ -57,7 +63,7 @@ y_entrada = [params.FA0 / FT0, params.FB0 / FT0, params.FC0 / FT0];
 params.Z0 = Z0;
 
 % Peso molecular promedio en la entrada [kg/mol]
-MW = [0.0280134; 0.00201588; 0.017031];
+
 MW_prom0 = y_entrada * MW;
 
 % Densidad real inicial [kg/m3]
@@ -81,7 +87,7 @@ params.alpha_Ergun = 2 * beta0 / (params.Ac * params.rho_iron * (1 - params.phi)
 opciones = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
 
 % --- SIMULACIÓN DEL LECHO 1 ---
-W_lecho1 = 20000; % kg de catalizador
+W_lecho1 = 2000; % kg de catalizador
 W_span1  = [0, W_lecho1];
 [W_out1, y_out1] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span1, y0, opciones);
 
@@ -90,7 +96,7 @@ y0_lecho2 = y_out1(end, :);
 y0_lecho2(5) = 673; % Enfriamiento a 673 K
 
 % --- SIMULACIÓN DEL LECHO 2 ---
-W_lecho2 = 30000; % kg de catalizador
+W_lecho2 = 3000; % kg de catalizador
 W_span2  = [W_out1(end), W_out1(end) + W_lecho2];
 [W_out2, y_out2] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span2, y0_lecho2, opciones);
 
@@ -99,7 +105,7 @@ y0_lecho3 = y_out2(end, :);
 y0_lecho3(5) = 673; % Enfriamiento a 673 K
 
 % --- SIMULACIÓN DEL LECHO 3 ---
-W_lecho3 = 30000; % kg de catalizador
+W_lecho3 = 3000; % kg de catalizador
 W_span3  = [W_out2(end), W_out2(end) + W_lecho3];
 [W_out3, y_out3] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span3, y0_lecho3, opciones); 
 
@@ -200,13 +206,13 @@ for k = 1:n_esc
 
     % 2. Resolver los 3 lechos en serie
     y0_k = [params.FA0, params.FB0, params.FC0, 1, params.T0];
-    [~, y1] = ode15s(@(W, y) funcion_reactor(W, y, params), [0, 20000], y0_k, opciones);
+    [~, y1] = ode15s(@(W, y) funcion_reactor(W, y, params), [0, W_lecho1], y0_k, opciones);
 
     y0_2 = y1(end, :); y0_2(5) = params.T0;
-    [~, y2] = ode15s(@(W, y) funcion_reactor(W, y, params), [20000, 50000], y0_2, opciones);
+    [~, y2] = ode15s(@(W, y) funcion_reactor(W, y, params), [W_lecho1 , W_lecho1 + W_lecho2], y0_2, opciones);
 
     y0_3 = y2(end, :); y0_3(5) = params.T0;
-    [~, y3] = ode15s(@(W, y) funcion_reactor(W, y, params), [50000, 80000], y0_3, opciones);
+    [~, y3] = ode15s(@(W, y) funcion_reactor(W, y, params), [W_lecho1 + W_lecho2, W_lecho1 + W_lecho2 + W_lecho3], y0_3, opciones);
 
     % 3. Extraer KPIs técnicos
     X_final_vec(k)  = ((params.FA0 - y3(end, 1)) / params.FA0) * 100;
@@ -287,13 +293,13 @@ for k = 1:n_esc_T
 
     % 2. Resolver los 3 lechos en serie (con intercooling hasta params.T0)
     y0_k = [params.FA0, params.FB0, params.FC0, 1, params.T0];
-    [~, y1] = ode15s(@(W, y) funcion_reactor(W, y, params), [0, 20000], y0_k, opciones);
+    [~, y1] = ode15s(@(W, y) funcion_reactor(W, y, params), [0, W_lecho1], y0_k, opciones);
 
     y0_2 = y1(end, :); y0_2(5) = params.T0;
-    [~, y2] = ode15s(@(W, y) funcion_reactor(W, y, params), [20000, 50000], y0_2, opciones);
+    [~, y2] = ode15s(@(W, y) funcion_reactor(W, y, params), [W_lecho1,W_lecho1 + W_lecho2], y0_2, opciones);
 
     y0_3 = y2(end, :); y0_3(5) = params.T0;
-    [~, y3] = ode15s(@(W, y) funcion_reactor(W, y, params), [50000, 80000], y0_3, opciones);
+    [~, y3] = ode15s(@(W, y) funcion_reactor(W, y, params), [W_lecho1 + W_lecho2 , W_lecho1 + W_lecho2 + W_lecho3], y0_3, opciones);
 
     % 3. Extraer KPIs técnicos
     X_final_T(k)  = ((params.FA0 - y3(end, 1)) / params.FA0) * 100;
