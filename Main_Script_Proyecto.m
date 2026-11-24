@@ -13,7 +13,8 @@ clear; clc; close all;
 % 1. DATOS INICIALES Y PARÁMETROS   
 params.R  = 8.314;          % Constante de los gases ideales [J/mol K]
 params.T0 = 400 + 273.15;   % Temperatura inicial [K]
-params.P0 = 150 * 101325;   % Presión inicial [Pa]
+params.P0 = 160 * 101325;   % Presión inicial [Pa]
+P0_base = params.P0;        % Respaldo
 params.H  = -92400;         % Calor de reacción [J/mol]
 
 % Parámetros cinéticos
@@ -38,8 +39,8 @@ params.a_NH3 = 35.15;   params.b_NH3 = 2.954e-2;  params.c_NH3 = 4.421e-6; param
 
 
 % CONDICIONES INICIALES DE FLUJO
-params.FA0 = 10000;            % Flujo inicial de N2 [mol/s]
-params.FB0 = 30000;            % Flujo inicial de H2 [mol/s]
+params.FA0 = 1000;            % Flujo inicial de N2 [mol/s]
+params.FB0 = 3000;            % Flujo inicial de H2 [mol/s]
 params.FC0 = 0.05 * params.FA0; % Flujo inicial de NH3 [mol/s] (5% de FA0)
 
 % Cálculo dinámico del flujo másico total y G [kg/(m2*s)]
@@ -87,7 +88,7 @@ params.alpha_Ergun = 2 * beta0 / (params.Ac * params.rho_iron * (1 - params.phi)
 opciones = odeset('RelTol', 1e-6, 'AbsTol', 1e-8);
 
 % --- SIMULACIÓN DEL LECHO 1 ---
-W_lecho1 = 2000; % kg de catalizador
+W_lecho1 = 200; % kg de catalizador
 W_span1  = [0, W_lecho1];
 [W_out1, y_out1] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span1, y0, opciones);
 
@@ -96,7 +97,7 @@ y0_lecho2 = y_out1(end, :);
 y0_lecho2(5) = 673; % Enfriamiento a 673 K
 
 % --- SIMULACIÓN DEL LECHO 2 ---
-W_lecho2 = 3000; % kg de catalizador
+W_lecho2 = 300; % kg de catalizador
 W_span2  = [W_out1(end), W_out1(end) + W_lecho2];
 [W_out2, y_out2] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span2, y0_lecho2, opciones);
 
@@ -105,7 +106,7 @@ y0_lecho3 = y_out2(end, :);
 y0_lecho3(5) = 673; % Enfriamiento a 673 K
 
 % --- SIMULACIÓN DEL LECHO 3 ---
-W_lecho3 = 3000; % kg de catalizador
+W_lecho3 = 300; % kg de catalizador
 W_span3  = [W_out2(end), W_out2(end) + W_lecho3];
 [W_out3, y_out3] = ode15s(@(W, y) funcion_reactor(W, y, params), W_span3, y0_lecho3, opciones); 
 
@@ -171,7 +172,7 @@ plot(W_out, X_N2 * 100, 'c-', 'LineWidth', 1.5);
 title('Conversión N_2'); xlabel('W [kg]'); ylabel('X [%]'); grid on;
 
 %% ANÁLISIS DE SENSIBILIDAD: EFECTO DE LA PRESIÓN DE OPERACIÓN (P0)
-P_vector_atm = [120, 150, 180, 210, 240, 270]; % Escenarios de presión [atm]
+P_vector_atm = [120,130,140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250,260, 270]; % Escenarios de presión [atm]
 n_esc = length(P_vector_atm);
 
 % Vectores para almacenar resultados de cada escenario
@@ -266,8 +267,8 @@ plot(P_vector_atm, Prod_NH3_vec, 'd-c', 'LineWidth', 1.8);
 title('Producción Neta de Amoníaco'); xlabel('P_0 [atm]'); ylabel('NH_3 [ton/día]'); grid on;
 
 %% ANÁLISIS DE SENSIBILIDAD: EFECTO DE LA TEMPERATURA DE ENTRADA (T0)
-params.P0 = 150 * 101325; % Restaurar presión base [Pa]
-T_vector_K = [623.15, 643.15, 663.15, 673.15, 693.15, 713.15, 733.15]; % [350 a 460 °C]
+params.P0 = P0_base; % Restaurar presión base [Pa]
+T_vector_K = [623.15, 633.15, 643.15,653.15, 663.15, 673.15, 683.15, 693.15,703.15, 713.15, 723.15, 733.15]; % [350 a 460 °C]
 n_esc_T = length(T_vector_K);
 
 % Vectores para almacenar resultados
@@ -324,7 +325,8 @@ for k = 1:n_esc_T
     Q_recup_T(k) = Q1 + Q2 + Q3;
 
     % 5. Potencia de compresión (constante a P0 = 150 atm)
-    rp = (150 / 1)^(1 / N_etapas);
+    P_actual_atm = params.P0 / 101325;
+    rp = (P_actual_atm / 1)^(1 / N_etapas);
     Z_prom = (1 + Z0_k) / 2;
     W_comp_T(k) = (N_etapas / eta_is) * FT0 * (gamma / (gamma - 1)) * ...
         Z_prom * params.R * 313.15 * (rp^((gamma - 1)/gamma) - 1) / 1e6;
@@ -349,6 +351,32 @@ legend('Compresión (Gasto)', 'Calor Recuperado (Crédito)', 'Location', 'west')
 subplot(2,2,4);
 plot(T_vector_K, Prod_NH3_T, 'd-c', 'LineWidth', 1.8);
 title('Producción Neta de Amoníaco vs. T_0'); xlabel('T_0 [K]'); ylabel('NH_3 [ton/día]'); grid on;
+
+%% EXPORTACIÓN DE DATOS DE LAS GRÁFICAS A EXCEL
+archivo_excel = 'Resultados_Haber_Bosch.xlsx';
+
+% --- Hoja 1: Datos de Figure 1 (Perfiles a lo largo del reactor) ---
+Tabla_Base = table(W_out, F_N2, F_H2, F_NH3, P_real/101325, T, X_N2*100, ...
+    'VariableNames', {'W_kg', 'F_N2_mols', 'F_H2_mols', 'F_NH3_mols', ...
+    'Presion_atm', 'Temperatura_K', 'Conversion_pct'});
+writetable(Tabla_Base, archivo_excel, 'Sheet', '1_Perfiles_Axiales');
+
+% --- Hoja 2: Datos de Figure 2 (Sensibilidad por Presión P0) ---
+% Nota: Se usa apóstrofe (') para transponer los vectores fila a columnas
+Tabla_Presion = table(P_vector_atm', X_final_vec', T_pico_vec', dP_total_vec', ...
+    W_comp_vec', Q_recup_vec', Prod_NH3_vec', ...
+    'VariableNames', {'P0_atm', 'Conversion_pct', 'T_max_K', 'Caida_Presion_atm', ...
+    'Potencia_Comp_MW', 'Calor_Recup_MW', 'Prod_NH3_ton_dia'});
+writetable(Tabla_Presion, archivo_excel, 'Sheet', '2_Sensibilidad_Presion');
+
+% --- Hoja 3: Datos de Figure 3 (Sensibilidad por Temperatura T0) ---
+Tabla_Temp = table(T_vector_K', X_final_T', T_pico_T', ...
+    W_comp_T', Q_recup_T', Prod_NH3_T', ...
+    'VariableNames', {'T0_K', 'Conversion_pct', 'T_max_K', ...
+    'Potencia_Comp_MW', 'Calor_Recup_MW', 'Prod_NH3_ton_dia'});
+writetable(Tabla_Temp, archivo_excel, 'Sheet', '3_Sensibilidad_Temp');
+
+disp(['Datos exportados exitosamente a: ', archivo_excel]);
 %% MODELADO %%
 
 function dydW = funcion_reactor(~, y, params)
